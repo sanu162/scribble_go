@@ -76,6 +76,7 @@ func (c *Client) readPump(h *hub) {
 
 	for {
 		_, message, err := c.Conn.ReadMessage()
+		log.Println("Received message:", string(message))
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error: %v", err)
@@ -88,6 +89,7 @@ func (c *Client) readPump(h *hub) {
 
 func (c *Client) writePump() {
 	for message := range c.Send {
+		log.Println("Sending message:", string(message))
 		err := c.Conn.WriteMessage(websocket.TextMessage, message)
 		if err != nil {
 			log.Println("write error:", err)

@@ -66,20 +66,42 @@
 
         .message {
             margin-bottom: 15px;
-            padding: 10px 15px;
-            border-radius: 5px;
             max-width: 80%;
-            word-wrap: break-word;
         }
 
         .message.sent {
-            background: #667eea;
-            color: white;
             margin-left: auto;
             text-align: right;
         }
 
         .message.received {
+            text-align: left;
+        }
+
+        .message-sender {
+            font-size: 12px;
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #666;
+        }
+
+        .message.sent .message-sender {
+            color: #667eea;
+        }
+
+        .message-content {
+            padding: 10px 15px;
+            border-radius: 5px;
+            word-wrap: break-word;
+            display: inline-block;
+        }
+
+        .message.sent .message-content {
+            background: #667eea;
+            color: white;
+        }
+
+        .message.received .message-content {
             background: white;
             color: #333;
             border: 1px solid #ddd;
@@ -148,6 +170,13 @@
         const sendBtn = document.getElementById('sendBtn');
         const statusDiv = document.getElementById('status');
         const userId = 'user_' + Math.random().toString(36).substr(2, 9);
+        let userName = '';
+
+        // Prompt for username on load
+        window.onload = function() {
+            userName = prompt('Enter your name:', 'User') || 'Anonymous';
+            connect();
+        };
 
         function connect() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -155,7 +184,7 @@
 
             ws.onopen = function() {
                 console.log('Connected to WebSocket');
-                statusDiv.textContent = 'Connected';
+                statusDiv.textContent = 'Connected as ' + userName;
                 statusDiv.className = 'status connected';
                 messageInput.disabled = false;
                 sendBtn.disabled = false;
@@ -164,7 +193,7 @@
             ws.onmessage = function(event) {
                 const data = JSON.parse(event.data);
                 const type = data.userId === userId ? 'sent' : 'received';
-                displayMessage(data.message, type);
+                displayMessage(data.userName, data.message, type);
             };
 
             ws.onclose = function() {
@@ -183,10 +212,20 @@
             };
         }
 
-        function displayMessage(text, type) {
+        function displayMessage(sender, text, type) {
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message ' + type;
-            messageDiv.textContent = text;
+            
+            const senderDiv = document.createElement('div');
+            senderDiv.className = 'message-sender';
+            senderDiv.textContent = type === 'sent' ? 'You' : sender;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = text;
+            
+            messageDiv.appendChild(senderDiv);
+            messageDiv.appendChild(contentDiv);
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
@@ -196,6 +235,7 @@
             if (message && ws.readyState === WebSocket.OPEN) {
                 const data = JSON.stringify({
                     userId: userId,
+                    userName: userName,
                     message: message
                 });
                 ws.send(data);
@@ -210,9 +250,6 @@
                 sendMessage();
             }
         });
-
-        // Connect on page load
-        connect();
     </script>
 </body>
 </html>
