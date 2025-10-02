@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            width: 90%;
+            max-width: 600px;
+            height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: #667eea;
+            color: white;
+            padding: 20px;
+            border-radius: 10px 10px 0 0;
+            text-align: center;
+        }
+
+        .status {
+            padding: 10px 20px;
+            background: #f7f7f7;
+            border-bottom: 1px solid #ddd;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #fafafa;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 5px;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+
+        .message.sent {
+            background: #667eea;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .message.received {
+            background: white;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+
+        .input-area {
+            display: flex;
+            padding: 20px;
+            border-top: 1px solid #ddd;
+            background: white;
+            border-radius: 0 0 10px 10px;
+        }
+
+        #messageInput {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            outline: none;
+        }
+
+        #messageInput:focus {
+            border-color: #667eea;
+        }
+
+        #sendBtn {
+            margin-left: 10px;
+            padding: 12px 25px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        #sendBtn:hover {
+            background: #5568d3;
+        }
+
+        #sendBtn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>WebSocket Chat</h1>
+        </div>
+        <div id="status" class="status disconnected">Disconnected</div>
+        <div id="messages"></div>
+        <div class="input-area">
+            <input type="text" id="messageInput" placeholder="Type a message..." disabled>
+            <button id="sendBtn" disabled>Send</button>
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        const messagesDiv = document.getElementById('messages');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const statusDiv = document.getElementById('status');
+        const userId = 'user_' + Math.random().toString(36).substr(2, 9);
+
+        function connect() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(protocol + '//' + window.location.host + '/ws');
+
+            ws.onopen = function() {
+                console.log('Connected to WebSocket');
+                statusDiv.textContent = 'Connected';
+                statusDiv.className = 'status connected';
+                messageInput.disabled = false;
+                sendBtn.disabled = false;
+            };
+
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                const type = data.userId === userId ? 'sent' : 'received';
+                displayMessage(data.message, type);
+            };
+
+            ws.onclose = function() {
+                console.log('Disconnected from WebSocket');
+                statusDiv.textContent = 'Disconnected - Reconnecting...';
+                statusDiv.className = 'status disconnected';
+                messageInput.disabled = true;
+                sendBtn.disabled = true;
+                
+                // Attempt to reconnect after 2 seconds
+                setTimeout(connect, 2000);
+            };
+
+            ws.onerror = function(error) {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        function displayMessage(text, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message ' + type;
+            messageDiv.textContent = text;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (message && ws.readyState === WebSocket.OPEN) {
+                const data = JSON.stringify({
+                    userId: userId,
+                    message: message
+                });
+                ws.send(data);
+                messageInput.value = '';
+            }
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+
+        messageInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // Connect on page load
+        connect();
+    </script>
+</body>
+</html>
