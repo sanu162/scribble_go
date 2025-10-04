@@ -89,8 +89,8 @@ var roomManager *RoomManager
 const (
 	smtpHost     = "smtp.gmail.com"
 	smtpPort     = "587"
-	senderEmail  = "your-email@gmail.com"  // Change this
-	senderPassword = "your-app-password"    // Change this (use App Password for Gmail)
+	senderEmail  = "suryadiscord29@gmail.com"  // Change this
+	senderPassword = "igjlfrmkavtugupw"    // Change this (use App Password for Gmail)
 )
 
 func newRoomManager(mongoClient *mongo.Client) *RoomManager {
