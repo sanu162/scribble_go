@@ -40,13 +40,72 @@
             margin-bottom: 30px;
         }
 
-        .create-room input {
+        .create-room input, .create-room select {
             width: 100%;
             padding: 15px;
             border: 1px solid #ddd;
             border-radius: 5px;
             font-size: 14px;
             margin-bottom: 10px;
+        }
+
+        .room-type-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .room-type-btn {
+            flex: 1;
+            padding: 15px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            background: white;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+            position: relative;
+        }
+
+        .room-type-btn:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+        }
+
+        .room-type-btn.active {
+            border-color: #667eea;
+            background: #667eea;
+            color: white;
+            font-weight: bold;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .room-type-btn.active::after {
+            content: '✓';
+            position: absolute;
+            top: 5px;
+            right: 10px;
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        .selection-indicator {
+            text-align: center;
+            margin: 15px 0 10px 0;
+            padding: 10px;
+            background: #f0f4ff;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #667eea;
+            border: 1px dashed #667eea;
+        }
+
+        .selection-indicator .icon {
+            font-size: 20px;
+            margin-right: 8px;
         }
 
         .create-room button {
@@ -105,6 +164,24 @@
             color: #333;
         }
 
+        .room-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            margin-left: 8px;
+        }
+
+        .badge-private {
+            background: #ff6b6b;
+            color: white;
+        }
+
+        .badge-public {
+            background: #51cf66;
+            color: white;
+        }
+
         .room-count {
             font-size: 12px;
             color: #666;
@@ -137,7 +214,22 @@
         
         <div class="create-room">
             <input type="text" id="roomIdInput" placeholder="Enter room name (e.g., general, tech, gaming)" />
-            <button onclick="createRoom()">Create/Join Room</button>
+            
+            <div class="room-type-selector">
+                <button class="room-type-btn active" id="publicBtn" onclick="selectRoomType('public')">
+                    🌍 Public Room
+                </button>
+                <button class="room-type-btn" id="privateBtn" onclick="selectRoomType('private')">
+                    🔒 Private Room
+                </button>
+            </div>
+
+            <div class="selection-indicator" id="selectionIndicator">
+                <span class="icon">🌍</span>
+                <span id="selectionText">Creating a PUBLIC room - Anyone can join</span>
+            </div>
+            
+            <button onclick="createOrJoinRoom()">Create/Join Room</button>
         </div>
 
         <div class="divider">OR</div>
@@ -151,13 +243,105 @@
     </div>
 
     <script>
-        function createRoom() {
+        let selectedRoomType = 'public';
+
+        function selectRoomType(type) {
+            selectedRoomType = type;
+            
+            // Update button states
+            document.getElementById('publicBtn').classList.toggle('active', type === 'public');
+            document.getElementById('privateBtn').classList.toggle('active', type === 'private');
+            
+            // Update indicator
+            const indicator = document.getElementById('selectionIndicator');
+            const icon = indicator.querySelector('.icon');
+            const text = document.getElementById('selectionText');
+            
+            if (type === 'public') {
+                icon.textContent = '🌍';
+                text.textContent = 'Creating a PUBLIC room - Anyone can join';
+                indicator.style.background = '#f0f4ff';
+                indicator.style.borderColor = '#667eea';
+                indicator.style.color = '#667eea';
+            } else {
+                icon.textContent = '🔒';
+                text.textContent = 'Creating a PRIVATE room - Only verified users can join';
+                indicator.style.background = '#fff0f0';
+                indicator.style.borderColor = '#ff6b6b';
+                indicator.style.color = '#ff6b6b';
+            }
+        }
+
+        async function createOrJoinRoom() {
             const roomId = document.getElementById('roomIdInput').value.trim();
+
             if (!roomId) {
                 alert('Please enter a room name');
                 return;
             }
-            window.location.href = '/room/' + encodeURIComponent(roomId);
+
+            // If creating a new private room, we need to save it first
+            if (selectedRoomType === 'private') {
+                // Redirect to room page where email will be collected
+                window.location.href = '/room/' + encodeURIComponent(roomId) + '?creating=true&type=private';
+            } else {
+                // For public rooms, redirect directly
+                window.location.href = '/room/' + encodeURIComponent(roomId);
+            }
+        }
+
+        async function createRoom() {
+            const roomId = document.getElementById('roomIdInput').value.trim();
+            const email = document.getElementById('emailInput').value.trim();
+
+            if (!roomId) {
+                alert('Please enter a room name');
+                return;
+            }
+
+            if (!email) {
+                alert('Please enter your email address');
+                return;
+            }
+
+            // Validate email format
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(email)) {
+                alert('Please enter a valid email address');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/room/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        roomId: roomId,
+                        isPrivate: selectedRoomType === 'private',
+                        creatorEmail: email
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Store email in localStorage for the room
+                    localStorage.setItem('userEmail', email);
+                    // Redirect with email parameter for private rooms
+                    if (selectedRoomType === 'private') {
+                        window.location.href = '/room/' + encodeURIComponent(roomId) + '?email=' + encodeURIComponent(email);
+                    } else {
+                        window.location.href = '/room/' + encodeURIComponent(roomId);
+                    }
+                } else {
+                    alert('Failed to create room: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error creating room:', error);
+                alert('Failed to create room. Please try again.');
+            }
         }
 
         function loadActiveRooms() {
@@ -174,7 +358,12 @@
                     roomList.innerHTML = data.rooms.map(room => `
                         <div class="room-item">
                             <div>
-                                <div class="room-name">${room.roomId}</div>
+                                <div class="room-name">
+                                    ${room.roomId}
+                                    <span class="room-badge ${room.isPrivate ? 'badge-private' : 'badge-public'}">
+                                        ${room.isPrivate ? '🔒 Private' : '🌍 Public'}
+                                    </span>
+                                </div>
                                 <div class="room-count">${room.clientCount} users online</div>
                             </div>
                             <a href="/room/${room.roomId}" class="join-btn">Join</a>
@@ -192,6 +381,12 @@
 
         // Enter key to create room
         document.getElementById('roomIdInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                createRoom();
+            }
+        });
+
+        document.getElementById('emailInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 createRoom();
             }

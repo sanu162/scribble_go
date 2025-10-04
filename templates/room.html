@@ -161,7 +161,7 @@
             cursor: not-allowed;
         }
 
-        .name-modal {
+        .modal {
             position: fixed;
             top: 0;
             left: 0;
@@ -174,24 +174,36 @@
             z-index: 1000;
         }
 
-        .name-modal-content {
+        .modal-content {
             background: white;
             padding: 30px;
             border-radius: 10px;
             text-align: center;
             max-width: 400px;
+            width: 90%;
         }
 
-        .name-modal input {
+        .modal-content h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .modal-content p {
+            margin-bottom: 15px;
+            color: #666;
+        }
+
+        .modal-content input {
             width: 100%;
             padding: 12px;
-            margin: 15px 0;
+            margin: 10px 0;
             border: 1px solid #ddd;
             border-radius: 5px;
             font-size: 14px;
         }
 
-        .name-modal button {
+        .modal-content button {
+            width: 100%;
             padding: 12px 30px;
             background: #667eea;
             color: white;
@@ -199,24 +211,105 @@
             border-radius: 5px;
             cursor: pointer;
             font-size: 14px;
+            margin-top: 10px;
+        }
+
+        .modal-content button:hover {
+            background: #5568d3;
+        }
+
+        .modal-content button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .modal-content button.secondary {
+            background: #999;
+        }
+
+        .modal-content button.secondary:hover {
+            background: #777;
+        }
+
+        .modal-content .error {
+            color: #ff6b6b;
+            font-size: 13px;
+            margin-top: 10px;
+        }
+
+        .modal-content .success {
+            color: #51cf66;
+            font-size: 13px;
+            margin-top: 10px;
+        }
+
+        .modal-step {
+            display: none;
+        }
+
+        .modal-step.active {
+            display: block;
+        }
+
+        .room-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 5px;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+
+        .badge-private {
+            background: rgba(255, 107, 107, 0.2);
+            color: #ff6b6b;
+            border: 1px solid #ff6b6b;
+        }
+
+        .badge-public {
+            background: rgba(81, 207, 102, 0.2);
+            color: #51cf66;
+            border: 1px solid #51cf66;
         }
     </style>
 </head>
 <body>
-    <div class="name-modal" id="nameModal">
-        <div class="name-modal-content">
-            <h2>Enter Your Name</h2>
+    <!-- Entry Modal (Name + Email) -->
+    <div class="modal" id="entryModal">
+        <div class="modal-content">
+            <h2>Join Room</h2>
+            <p id="roomTypeIndicator"></p>
             <input type="text" id="nameInput" placeholder="Your name..." />
-            <button onclick="joinRoom()">Join Room</button>
+            <input type="email" id="emailInput" placeholder="Your email..." />
+            <button onclick="submitEntry()" id="entryBtn">Continue</button>
+            <div id="entryError" class="error"></div>
+        </div>
+    </div>
+
+    <!-- OTP Modal -->
+    <div class="modal" id="otpModal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-step active" id="otpStep">
+                <h2>🔒 Private Room Verification</h2>
+                <p>We've sent a 6-digit OTP to your email</p>
+                <p style="font-weight: bold; color: #667eea;" id="otpEmailDisplay"></p>
+                <input type="text" id="otpInput" placeholder="Enter 6-digit OTP..." maxlength="6" />
+                <button onclick="verifyOTP()" id="verifyOtpBtn">Verify OTP</button>
+                <button onclick="resendOTP()" class="secondary" id="resendBtn">Resend OTP</button>
+                <div id="otpError" class="error"></div>
+                <div id="otpSuccess" class="success"></div>
+            </div>
         </div>
     </div>
 
     <div class="container" style="display: none;" id="chatContainer">
         <div class="header">
             <h1>Chat Room</h1>
-            <div class="room-info">Room: {{ .roomId }}</div>
+            <div class="room-info">
+                Room: {{ .roomId }}
+                <div class="room-badge" id="roomBadge"></div>
+            </div>
         </div>
-        <div id="status" class="status disconnected">Disconnected</div>
+        <div id="status" class="status disconnected">Connecting...</div>
         <div id="messages"></div>
         <div class="input-area">
             <input type="text" id="messageInput" placeholder="Type a message..." disabled>
@@ -233,22 +326,278 @@
         const statusDiv = document.getElementById('status');
         const userId = 'user_' + Math.random().toString(36).substr(2, 9);
         let userName = '';
+        let userEmail = '';
+        let isPrivateRoom = false;
+        let accessGranted = false;
+        let isCreatingRoom = false;
 
-        function joinRoom() {
-            userName = document.getElementById('nameInput').value.trim();
-            if (!userName) {
-                alert('Please enter your name');
+        async function checkRoomStatus() {
+            const urlParams = new URLSearchParams(window.location.search);
+            isCreatingRoom = urlParams.get('creating') === 'true';
+            const roomType = urlParams.get('type');
+
+            if (isCreatingRoom && roomType === 'private') {
+                // Creating a new private room
+                isPrivateRoom = true;
+                document.getElementById('roomTypeIndicator').innerHTML = 
+                    '🔒 <strong>Creating Private Room</strong><br>You will be the room creator';
                 return;
             }
 
-            document.getElementById('nameModal').style.display = 'none';
-            document.getElementById('chatContainer').style.display = 'flex';
-            connect();
+            // Check if room exists and its type
+            try {
+                const response = await fetch(`/api/room/${roomId}/info`);
+                if (response.ok) {
+                    const data = await response.json();
+                    isPrivateRoom = data.isPrivate;
+                    
+                    if (isPrivateRoom) {
+                        document.getElementById('roomTypeIndicator').innerHTML = 
+                            '🔒 <strong>Private Room</strong><br>Email verification required';
+                    } else {
+                        document.getElementById('roomTypeIndicator').innerHTML = 
+                            '🌍 <strong>Public Room</strong><br>Anyone can join';
+                    }
+                } else {
+                    // Room doesn't exist yet - treat as public by default
+                    document.getElementById('roomTypeIndicator').innerHTML = 
+                        '🌍 <strong>Public Room</strong><br>Anyone can join';
+                }
+            } catch (error) {
+                console.error('Error checking room:', error);
+                document.getElementById('roomTypeIndicator').innerHTML = 
+                    'Enter your details to join';
+            }
+        }
+
+        async function submitEntry() {
+            userName = document.getElementById('nameInput').value.trim();
+            userEmail = document.getElementById('emailInput').value.trim();
+            const errorDiv = document.getElementById('entryError');
+            const btn = document.getElementById('entryBtn');
+
+            errorDiv.textContent = '';
+
+            if (!userName) {
+                errorDiv.textContent = 'Please enter your name';
+                return;
+            }
+
+            if (!userEmail) {
+                errorDiv.textContent = 'Please enter your email';
+                return;
+            }
+
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(userEmail)) {
+                errorDiv.textContent = 'Please enter a valid email address';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Checking...';
+
+            try {
+                // If creating a private room, create it first
+                if (isCreatingRoom && isPrivateRoom) {
+                    const createResponse = await fetch('/api/room/create', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            roomId: roomId,
+                            isPrivate: true,
+                            creatorEmail: userEmail
+                        })
+                    });
+
+                    const createData = await createResponse.json();
+                    if (!createData.success) {
+                        errorDiv.textContent = createData.error || 'Failed to create room';
+                        btn.disabled = false;
+                        btn.textContent = 'Continue';
+                        return;
+                    }
+
+                    // Creator is automatically allowed
+                    accessGranted = true;
+                    document.getElementById('entryModal').style.display = 'none';
+                    document.getElementById('chatContainer').style.display = 'flex';
+                    updateRoomBadge();
+                    connect();
+                    return;
+                }
+
+                // Check access for existing rooms
+                if (isPrivateRoom) {
+                    const accessResponse = await fetch(`/api/room/${roomId}/check-access/${encodeURIComponent(userEmail)}`);
+                    const accessData = await accessResponse.json();
+
+                    if (accessData.allowed) {
+                        // Already verified
+                        accessGranted = true;
+                        document.getElementById('entryModal').style.display = 'none';
+                        document.getElementById('chatContainer').style.display = 'flex';
+                        updateRoomBadge();
+                        connect();
+                    } else {
+                        // Need OTP verification
+                        await requestOTP();
+                    }
+                } else {
+                    // Public room - direct access
+                    accessGranted = true;
+                    document.getElementById('entryModal').style.display = 'none';
+                    document.getElementById('chatContainer').style.display = 'flex';
+                    updateRoomBadge();
+                    connect();
+                }
+            } catch (error) {
+                errorDiv.textContent = 'Error checking access. Please try again.';
+                console.error('Error:', error);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Continue';
+            }
+        }
+
+        async function requestOTP() {
+            const errorDiv = document.getElementById('otpError');
+            errorDiv.textContent = '';
+
+            try {
+                const response = await fetch('/api/room/request-otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        roomId: roomId,
+                        email: userEmail
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('otpEmailDisplay').textContent = userEmail;
+                    document.getElementById('entryModal').style.display = 'none';
+                    document.getElementById('otpModal').style.display = 'flex';
+                } else {
+                    document.getElementById('entryError').textContent = data.error || 'Failed to send OTP';
+                }
+            } catch (error) {
+                document.getElementById('entryError').textContent = 'Error sending OTP. Please try again.';
+                console.error('Error:', error);
+            }
+        }
+
+        async function verifyOTP() {
+            const otp = document.getElementById('otpInput').value.trim();
+            const errorDiv = document.getElementById('otpError');
+            const successDiv = document.getElementById('otpSuccess');
+            const btn = document.getElementById('verifyOtpBtn');
+
+            errorDiv.textContent = '';
+            successDiv.textContent = '';
+
+            if (!otp || otp.length !== 6) {
+                errorDiv.textContent = 'Please enter a valid 6-digit OTP';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Verifying...';
+
+            try {
+                const response = await fetch('/api/room/verify-otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        roomId: roomId,
+                        email: userEmail,
+                        otp: otp
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    successDiv.textContent = '✓ Verified! Joining room...';
+                    accessGranted = true;
+                    
+                    setTimeout(() => {
+                        document.getElementById('otpModal').style.display = 'none';
+                        document.getElementById('chatContainer').style.display = 'flex';
+                        updateRoomBadge();
+                        connect();
+                    }, 1000);
+                } else {
+                    errorDiv.textContent = data.error || 'Invalid OTP';
+                }
+            } catch (error) {
+                errorDiv.textContent = 'Error verifying OTP. Please try again.';
+                console.error('Error:', error);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Verify OTP';
+            }
+        }
+
+        async function resendOTP() {
+            const btn = document.getElementById('resendBtn');
+            const errorDiv = document.getElementById('otpError');
+            const successDiv = document.getElementById('otpSuccess');
+            
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            errorDiv.textContent = '';
+            successDiv.textContent = '';
+
+            try {
+                await requestOTPDirect();
+                successDiv.textContent = '✓ OTP resent successfully!';
+            } catch (error) {
+                errorDiv.textContent = 'Failed to resend OTP';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Resend OTP';
+            }
+        }
+
+        async function requestOTPDirect() {
+            const response = await fetch('/api/room/request-otp', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    roomId: roomId,
+                    email: userEmail
+                })
+            });
+
+            const data = await response.json();
+            if (!data.success) {
+                throw new Error(data.error);
+            }
+        }
+
+        function updateRoomBadge() {
+            const badge = document.getElementById('roomBadge');
+            if (isPrivateRoom) {
+                badge.className = 'room-badge badge-private';
+                badge.textContent = '🔒 Private';
+            } else {
+                badge.className = 'room-badge badge-public';
+                badge.textContent = '🌍 Public';
+            }
         }
 
         function connect() {
+            if (!accessGranted) {
+                console.error('Access not granted, cannot connect');
+                return;
+            }
+
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(protocol + '//' + window.location.host + '/ws/' + roomId);
+            const wsUrl = protocol + '//' + window.location.host + '/ws/' + roomId + '?email=' + encodeURIComponent(userEmail);
+            ws = new WebSocket(wsUrl);
 
             ws.onopen = function() {
                 console.log('Connected to room:', roomId);
@@ -261,6 +610,13 @@
             ws.onmessage = function(event) {
                 try {
                     const data = JSON.parse(event.data);
+                    
+                    if (data.error === 'access_denied') {
+                        alert(data.message || 'Access denied to this room');
+                        window.location.href = '/';
+                        return;
+                    }
+                    
                     const type = data.userId === userId ? 'sent' : 'received';
                     displayMessage(data.userName, data.message, type, data.timestamp);
                 } catch (e) {
@@ -268,8 +624,17 @@
                 }
             };
 
-            ws.onclose = function() {
+            ws.onclose = function(event) {
                 console.log('Disconnected from room');
+                
+                if (event.code === 1008 || !accessGranted) {
+                    statusDiv.textContent = 'Access Denied';
+                    statusDiv.className = 'status disconnected';
+                    alert('You do not have access to this room');
+                    window.location.href = '/';
+                    return;
+                }
+                
                 statusDiv.textContent = 'Disconnected - Reconnecting...';
                 statusDiv.className = 'status disconnected';
                 messageInput.disabled = true;
@@ -330,6 +695,12 @@
                 sendMessage();
             }
         });
+
+        // Initialize
+        window.onload = async function() {
+            await checkRoomStatus();
+            document.getElementById('entryModal').style.display = 'flex';
+        };
     </script>
 </body>
 </html>
