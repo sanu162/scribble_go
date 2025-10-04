@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebSocket Chat</title>
+    <title>WebSocket Chat - Home</title>
     <style>
         * {
             margin: 0;
@@ -14,240 +14,186 @@
         body {
             font-family: Arial, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            height: 100vh;
+            min-height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
+            padding: 20px;
         }
 
         .container {
             background: white;
             border-radius: 10px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-            width: 90%;
+            width: 100%;
             max-width: 600px;
-            height: 80vh;
-            display: flex;
-            flex-direction: column;
+            padding: 40px;
         }
 
-        .header {
-            background: #667eea;
-            color: white;
-            padding: 20px;
-            border-radius: 10px 10px 0 0;
-            text-align: center;
-        }
-
-        .status {
-            padding: 10px 20px;
-            background: #f7f7f7;
-            border-bottom: 1px solid #ddd;
-            font-size: 14px;
-            color: #666;
-        }
-
-        .status.connected {
-            background: #d4edda;
-            color: #155724;
-        }
-
-        .status.disconnected {
-            background: #f8d7da;
-            color: #721c24;
-        }
-
-        #messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 20px;
-            background: #fafafa;
-        }
-
-        .message {
-            margin-bottom: 15px;
-            max-width: 80%;
-        }
-
-        .message.sent {
-            margin-left: auto;
-            text-align: right;
-        }
-
-        .message.received {
-            text-align: left;
-        }
-
-        .message-sender {
-            font-size: 12px;
-            font-weight: bold;
-            margin-bottom: 5px;
-            color: #666;
-        }
-
-        .message.sent .message-sender {
+        h1 {
             color: #667eea;
+            text-align: center;
+            margin-bottom: 30px;
         }
 
-        .message-content {
-            padding: 10px 15px;
-            border-radius: 5px;
-            word-wrap: break-word;
-            display: inline-block;
+        .create-room {
+            margin-bottom: 30px;
         }
 
-        .message.sent .message-content {
-            background: #667eea;
-            color: white;
-        }
-
-        .message.received .message-content {
-            background: white;
-            color: #333;
-            border: 1px solid #ddd;
-        }
-
-        .input-area {
-            display: flex;
-            padding: 20px;
-            border-top: 1px solid #ddd;
-            background: white;
-            border-radius: 0 0 10px 10px;
-        }
-
-        #messageInput {
-            flex: 1;
-            padding: 12px;
+        .create-room input {
+            width: 100%;
+            padding: 15px;
             border: 1px solid #ddd;
             border-radius: 5px;
             font-size: 14px;
-            outline: none;
+            margin-bottom: 10px;
         }
 
-        #messageInput:focus {
-            border-color: #667eea;
-        }
-
-        #sendBtn {
-            margin-left: 10px;
-            padding: 12px 25px;
+        .create-room button {
+            width: 100%;
+            padding: 15px;
             background: #667eea;
             color: white;
             border: none;
             border-radius: 5px;
             cursor: pointer;
-            font-size: 14px;
-            transition: background 0.3s;
+            font-size: 16px;
+            font-weight: bold;
         }
 
-        #sendBtn:hover {
+        .create-room button:hover {
             background: #5568d3;
         }
 
-        #sendBtn:disabled {
-            background: #ccc;
-            cursor: not-allowed;
+        .divider {
+            text-align: center;
+            margin: 30px 0;
+            color: #999;
+        }
+
+        .active-rooms {
+            margin-top: 20px;
+        }
+
+        .active-rooms h2 {
+            font-size: 18px;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .room-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .room-item {
+            background: #f7f7f7;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .room-item:hover {
+            background: #e9e9e9;
+        }
+
+        .room-name {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .room-count {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .join-btn {
+            padding: 8px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+
+        .join-btn:hover {
+            background: #5568d3;
+        }
+
+        .no-rooms {
+            text-align: center;
+            color: #999;
+            padding: 20px;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>WebSocket Chat</h1>
+        <h1>🚀 WebSocket Chat Rooms</h1>
+        
+        <div class="create-room">
+            <input type="text" id="roomIdInput" placeholder="Enter room name (e.g., general, tech, gaming)" />
+            <button onclick="createRoom()">Create/Join Room</button>
         </div>
-        <div id="status" class="status disconnected">Disconnected</div>
-        <div id="messages"></div>
-        <div class="input-area">
-            <input type="text" id="messageInput" placeholder="Type a message..." disabled>
-            <button id="sendBtn" disabled>Send</button>
+
+        <div class="divider">OR</div>
+
+        <div class="active-rooms">
+            <h2>Active Rooms</h2>
+            <div id="roomList" class="room-list">
+                <div class="no-rooms">No active rooms. Create one!</div>
+            </div>
         </div>
     </div>
 
     <script>
-        let ws;
-        const messagesDiv = document.getElementById('messages');
-        const messageInput = document.getElementById('messageInput');
-        const sendBtn = document.getElementById('sendBtn');
-        const statusDiv = document.getElementById('status');
-        const userId = 'user_' + Math.random().toString(36).substr(2, 9);
-        let userName = '';
-
-        // Prompt for username on load
-        window.onload = function() {
-            userName = prompt('Enter your name:', 'User') || 'Anonymous';
-            connect();
-        };
-
-        function connect() {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(protocol + '//' + window.location.host + '/ws');
-
-            ws.onopen = function() {
-                console.log('Connected to WebSocket');
-                statusDiv.textContent = 'Connected as ' + userName;
-                statusDiv.className = 'status connected';
-                messageInput.disabled = false;
-                sendBtn.disabled = false;
-            };
-
-            ws.onmessage = function(event) {
-                const data = JSON.parse(event.data);
-                const type = data.userId === userId ? 'sent' : 'received';
-                displayMessage(data.userName, data.message, type);
-            };
-
-            ws.onclose = function() {
-                console.log('Disconnected from WebSocket');
-                statusDiv.textContent = 'Disconnected - Reconnecting...';
-                statusDiv.className = 'status disconnected';
-                messageInput.disabled = true;
-                sendBtn.disabled = true;
-                
-                // Attempt to reconnect after 2 seconds
-                setTimeout(connect, 2000);
-            };
-
-            ws.onerror = function(error) {
-                console.error('WebSocket error:', error);
-            };
-        }
-
-        function displayMessage(sender, text, type) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = 'message ' + type;
-            
-            const senderDiv = document.createElement('div');
-            senderDiv.className = 'message-sender';
-            senderDiv.textContent = type === 'sent' ? 'You' : sender;
-            
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content';
-            contentDiv.textContent = text;
-            
-            messageDiv.appendChild(senderDiv);
-            messageDiv.appendChild(contentDiv);
-            messagesDiv.appendChild(messageDiv);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-
-        function sendMessage() {
-            const message = messageInput.value.trim();
-            if (message && ws.readyState === WebSocket.OPEN) {
-                const data = JSON.stringify({
-                    userId: userId,
-                    userName: userName,
-                    message: message
-                });
-                ws.send(data);
-                messageInput.value = '';
+        function createRoom() {
+            const roomId = document.getElementById('roomIdInput').value.trim();
+            if (!roomId) {
+                alert('Please enter a room name');
+                return;
             }
+            window.location.href = '/room/' + encodeURIComponent(roomId);
         }
 
-        sendBtn.addEventListener('click', sendMessage);
+        function loadActiveRooms() {
+            fetch('/api/rooms')
+                .then(res => res.json())
+                .then(data => {
+                    const roomList = document.getElementById('roomList');
+                    
+                    if (data.rooms.length === 0) {
+                        roomList.innerHTML = '<div class="no-rooms">No active rooms. Create one!</div>';
+                        return;
+                    }
 
-        messageInput.addEventListener('keypress', function(e) {
+                    roomList.innerHTML = data.rooms.map(room => `
+                        <div class="room-item">
+                            <div>
+                                <div class="room-name">${room.roomId}</div>
+                                <div class="room-count">${room.clientCount} users online</div>
+                            </div>
+                            <a href="/room/${room.roomId}" class="join-btn">Join</a>
+                        </div>
+                    `).join('');
+                })
+                .catch(err => console.error('Error loading rooms:', err));
+        }
+
+        // Load rooms on page load
+        loadActiveRooms();
+
+        // Refresh rooms every 5 seconds
+        setInterval(loadActiveRooms, 5000);
+
+        // Enter key to create room
+        document.getElementById('roomIdInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
-                sendMessage();
+                createRoom();
             }
         });
     </script>

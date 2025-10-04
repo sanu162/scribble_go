@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Room - {{ .roomId }}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            width: 90%;
+            max-width: 600px;
+            height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: #667eea;
+            color: white;
+            padding: 20px;
+            border-radius: 10px 10px 0 0;
+            text-align: center;
+        }
+
+        .room-info {
+            font-size: 14px;
+            margin-top: 5px;
+            opacity: 0.9;
+        }
+
+        .status {
+            padding: 10px 20px;
+            background: #f7f7f7;
+            border-bottom: 1px solid #ddd;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #fafafa;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            max-width: 80%;
+        }
+
+        .message.sent {
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .message.received {
+            text-align: left;
+        }
+
+        .message-sender {
+            font-size: 12px;
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #666;
+        }
+
+        .message.sent .message-sender {
+            color: #667eea;
+        }
+
+        .message-content {
+            padding: 10px 15px;
+            border-radius: 5px;
+            word-wrap: break-word;
+            display: inline-block;
+        }
+
+        .message.sent .message-content {
+            background: #667eea;
+            color: white;
+        }
+
+        .message.received .message-content {
+            background: white;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+
+        .message-time {
+            font-size: 10px;
+            color: #999;
+            margin-top: 3px;
+        }
+
+        .input-area {
+            display: flex;
+            padding: 20px;
+            border-top: 1px solid #ddd;
+            background: white;
+            border-radius: 0 0 10px 10px;
+        }
+
+        #messageInput {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            outline: none;
+        }
+
+        #messageInput:focus {
+            border-color: #667eea;
+        }
+
+        #sendBtn {
+            margin-left: 10px;
+            padding: 12px 25px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        #sendBtn:hover {
+            background: #5568d3;
+        }
+
+        #sendBtn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .name-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .name-modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            max-width: 400px;
+        }
+
+        .name-modal input {
+            width: 100%;
+            padding: 12px;
+            margin: 15px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .name-modal button {
+            padding: 12px 30px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="name-modal" id="nameModal">
+        <div class="name-modal-content">
+            <h2>Enter Your Name</h2>
+            <input type="text" id="nameInput" placeholder="Your name..." />
+            <button onclick="joinRoom()">Join Room</button>
+        </div>
+    </div>
+
+    <div class="container" style="display: none;" id="chatContainer">
+        <div class="header">
+            <h1>Chat Room</h1>
+            <div class="room-info">Room: {{ .roomId }}</div>
+        </div>
+        <div id="status" class="status disconnected">Disconnected</div>
+        <div id="messages"></div>
+        <div class="input-area">
+            <input type="text" id="messageInput" placeholder="Type a message..." disabled>
+            <button id="sendBtn" disabled>Send</button>
+        </div>
+    </div>
+
+    <script>
+        const roomId = "{{ .roomId }}";
+        let ws;
+        const messagesDiv = document.getElementById('messages');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const statusDiv = document.getElementById('status');
+        const userId = 'user_' + Math.random().toString(36).substr(2, 9);
+        let userName = '';
+
+        function joinRoom() {
+            userName = document.getElementById('nameInput').value.trim();
+            if (!userName) {
+                alert('Please enter your name');
+                return;
+            }
+
+            document.getElementById('nameModal').style.display = 'none';
+            document.getElementById('chatContainer').style.display = 'flex';
+            connect();
+        }
+
+        function connect() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(protocol + '//' + window.location.host + '/ws/' + roomId);
+
+            ws.onopen = function() {
+                console.log('Connected to room:', roomId);
+                statusDiv.textContent = 'Connected as ' + userName;
+                statusDiv.className = 'status connected';
+                messageInput.disabled = false;
+                sendBtn.disabled = false;
+            };
+
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    const type = data.userId === userId ? 'sent' : 'received';
+                    displayMessage(data.userName, data.message, type, data.timestamp);
+                } catch (e) {
+                    console.error('Error parsing message:', e);
+                }
+            };
+
+            ws.onclose = function() {
+                console.log('Disconnected from room');
+                statusDiv.textContent = 'Disconnected - Reconnecting...';
+                statusDiv.className = 'status disconnected';
+                messageInput.disabled = true;
+                sendBtn.disabled = true;
+                
+                setTimeout(connect, 2000);
+            };
+
+            ws.onerror = function(error) {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        function displayMessage(sender, text, type, timestamp) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message ' + type;
+            
+            const senderDiv = document.createElement('div');
+            senderDiv.className = 'message-sender';
+            senderDiv.textContent = type === 'sent' ? 'You' : sender;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = text;
+            
+            const timeDiv = document.createElement('div');
+            timeDiv.className = 'message-time';
+            if (timestamp) {
+                const date = new Date(timestamp);
+                timeDiv.textContent = date.toLocaleTimeString();
+            }
+            
+            messageDiv.appendChild(senderDiv);
+            messageDiv.appendChild(contentDiv);
+            messageDiv.appendChild(timeDiv);
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (message && ws.readyState === WebSocket.OPEN) {
+                const data = JSON.stringify({
+                    userId: userId,
+                    userName: userName,
+                    message: message,
+                    timestamp: new Date().toISOString()
+                });
+                ws.send(data);
+                messageInput.value = '';
+            }
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+
+        messageInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>
