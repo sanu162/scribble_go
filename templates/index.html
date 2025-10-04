@@ -286,61 +286,7 @@
                 window.location.href = '/room/' + encodeURIComponent(roomId) + '?creating=true&type=private';
             } else {
                 // For public rooms, redirect directly
-                window.location.href = '/room/' + encodeURIComponent(roomId);
-            }
-        }
-
-        async function createRoom() {
-            const roomId = document.getElementById('roomIdInput').value.trim();
-            const email = document.getElementById('emailInput').value.trim();
-
-            if (!roomId) {
-                alert('Please enter a room name');
-                return;
-            }
-
-            if (!email) {
-                alert('Please enter your email address');
-                return;
-            }
-
-            // Validate email format
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(email)) {
-                alert('Please enter a valid email address');
-                return;
-            }
-
-            try {
-                const response = await fetch('/api/room/create', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        roomId: roomId,
-                        isPrivate: selectedRoomType === 'private',
-                        creatorEmail: email
-                    })
-                });
-
-                const data = await response.json();
-
-                if (data.success) {
-                    // Store email in localStorage for the room
-                    localStorage.setItem('userEmail', email);
-                    // Redirect with email parameter for private rooms
-                    if (selectedRoomType === 'private') {
-                        window.location.href = '/room/' + encodeURIComponent(roomId) + '?email=' + encodeURIComponent(email);
-                    } else {
-                        window.location.href = '/room/' + encodeURIComponent(roomId);
-                    }
-                } else {
-                    alert('Failed to create room: ' + (data.error || 'Unknown error'));
-                }
-            } catch (error) {
-                console.error('Error creating room:', error);
-                alert('Failed to create room. Please try again.');
+                window.location.href = '/room/' + encodeURIComponent(roomId) + '?creating=true&type=public';
             }
         }
 
@@ -382,13 +328,7 @@
         // Enter key to create room
         document.getElementById('roomIdInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
-                createRoom();
-            }
-        });
-
-        document.getElementById('emailInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                createRoom();
+                createOrJoinRoom();
             }
         });
     </script>

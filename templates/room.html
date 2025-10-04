@@ -399,13 +399,13 @@
 
             try {
                 // If creating a private room, create it first
-                if (isCreatingRoom && isPrivateRoom) {
+                if (isCreatingRoom) {
                     const createResponse = await fetch('/api/room/create', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             roomId: roomId,
-                            isPrivate: true,
+                            isPrivate: isPrivateRoom,
                             creatorEmail: userEmail
                         })
                     });

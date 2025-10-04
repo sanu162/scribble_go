@@ -36,11 +36,11 @@ type Message struct {
 
 // RoomInfo struct for MongoDB
 type RoomInfo struct {
-	RoomID      string   `bson:"room_id" json:"roomId"`
-	IsPrivate   bool     `bson:"is_private" json:"isPrivate"`
-	CreatorEmail string  `bson:"creator_email" json:"creatorEmail"`
-	AllowedEmails []string `bson:"allowed_emails" json:"allowedEmails"`
-	CreatedAt   time.Time `bson:"created_at" json:"createdAt"`
+	RoomID        string    `bson:"room_id" json:"roomId"`
+	IsPrivate     bool      `bson:"is_private" json:"isPrivate"`
+	CreatorEmail  string    `bson:"creator_email" json:"creatorEmail"`
+	AllowedEmails []string  `bson:"allowed_emails" json:"allowedEmails"`
+	CreatedAt     time.Time `bson:"created_at" json:"createdAt"`
 }
 
 // OTP struct
@@ -87,10 +87,10 @@ var roomManager *RoomManager
 
 // Email configuration - UPDATE THESE WITH YOUR SMTP DETAILS
 const (
-	smtpHost     = "smtp.gmail.com"
-	smtpPort     = "587"
-	senderEmail  = "suryadiscord29@gmail.com"  // Change this
-	senderPassword = "igjlfrmkavtugupw"    // Change this (use App Password for Gmail)
+	smtpHost       = "smtp.gmail.com"
+	smtpPort       = "587"
+	senderEmail    = "suryadiscord29@gmail.com"
+	senderPassword = "igjlfrmkavtugupw"
 )
 
 func newRoomManager(mongoClient *mongo.Client) *RoomManager {
@@ -129,10 +129,34 @@ func (rm *RoomManager) getOrCreateRoom(roomID string, isPrivate bool) *Room {
 
 func (rm *RoomManager) deleteRoom(roomID string) {
 	rm.mu.Lock()
-	defer rm.mu.Unlock()
-
 	delete(rm.rooms, roomID)
-	log.Printf("Room deleted: %s", roomID)
+	rm.mu.Unlock()
+	
+	log.Printf("Room deleted from memory: %s", roomID)
+
+	// Delete room and messages from database in background
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// Delete room info
+		roomCollection := rm.db.Collection("rooms")
+		_, err := roomCollection.DeleteOne(ctx, bson.M{"room_id": roomID})
+		if err != nil {
+			log.Printf("Error deleting room info from database: %v", err)
+		} else {
+			log.Printf("Room info deleted from database: %s", roomID)
+		}
+
+		// Delete all messages in this room
+		messagesCollection := rm.db.Collection("messages")
+		result, err := messagesCollection.DeleteMany(ctx, bson.M{"room_id": roomID})
+		if err != nil {
+			log.Printf("Error deleting room messages from database: %v", err)
+		} else {
+			log.Printf("Deleted %d messages for room: %s", result.DeletedCount, roomID)
+		}
+	}()
 }
 
 func (rm *RoomManager) saveMessage(msg Message) error {
@@ -150,7 +174,7 @@ func (rm *RoomManager) getMessageHistory(roomID string) ([]Message, error) {
 
 	collection := rm.db.Collection("messages")
 	opts := options.Find().SetSort(bson.D{{Key: "timestamp", Value: 1}})
-	
+
 	cursor, err := collection.Find(ctx, bson.M{"room_id": roomID}, opts)
 	if err != nil {
 		return nil, err
@@ -170,8 +194,23 @@ func (rm *RoomManager) saveRoomInfo(roomInfo RoomInfo) error {
 	defer cancel()
 
 	collection := rm.db.Collection("rooms")
-	_, err := collection.InsertOne(ctx, roomInfo)
-	return err
+	
+	// Check if room already exists
+	var existingRoom RoomInfo
+	err := collection.FindOne(ctx, bson.M{"room_id": roomInfo.RoomID}).Decode(&existingRoom)
+	
+	if err == mongo.ErrNoDocuments {
+		// Room doesn't exist, create it
+		_, err = collection.InsertOne(ctx, roomInfo)
+		return err
+	} else if err != nil {
+		// Some other error occurred
+		return err
+	}
+	
+	// Room already exists
+	log.Printf("Room %s already exists in database", roomInfo.RoomID)
+	return nil
 }
 
 func (rm *RoomManager) getRoomInfo(roomID string) (*RoomInfo, error) {
@@ -237,9 +276,9 @@ func (r *Room) run() {
 				close(client.send)
 				clientCount := len(r.clients)
 				r.mu.Unlock()
-				
+
 				log.Printf("Client left room %s. Total clients: %d", r.id, clientCount)
-				
+
 				if clientCount == 0 {
 					r.manager.deleteRoom(r.id)
 					return
@@ -314,8 +353,8 @@ func (c *Client) writePump() {
 
 func handleWebSocket(c *gin.Context) {
 	roomID := c.Param("roomId")
-	email := c.Query("email") // Get email from query parameter
-	
+	email := c.Query("email")
+
 	if roomID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Room ID required"})
 		return
@@ -392,16 +431,16 @@ func main() {
 	defer cancel()
 
 	mongoURI := "mongodb+srv://suryakanta:5p17Bkv97rw9y9FX@cluster0.dtft09e.mongodb.net/?retryWrites=true&w=majority"
-	
+
 	clientOptions := options.Client().
 		ApplyURI(mongoURI).
 		SetServerAPIOptions(options.ServerAPI(options.ServerAPIVersion1))
-	
+
 	mongoClient, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
 		log.Fatal("MongoDB connection error:", err)
 	}
-	
+
 	defer func() {
 		if err := mongoClient.Disconnect(context.Background()); err != nil {
 			log.Printf("Error disconnecting from MongoDB: %v", err)
@@ -417,7 +456,7 @@ func main() {
 
 	r := gin.Default()
 	r.LoadHTMLGlob("templates/*")
-	
+
 	r.GET("/", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "index.html", nil)
 	})
@@ -442,11 +481,11 @@ func main() {
 		}
 
 		roomInfo := RoomInfo{
-			RoomID:       req.RoomID,
-			IsPrivate:    req.IsPrivate,
-			CreatorEmail: req.CreatorEmail,
+			RoomID:        req.RoomID,
+			IsPrivate:     req.IsPrivate,
+			CreatorEmail:  req.CreatorEmail,
 			AllowedEmails: []string{req.CreatorEmail},
-			CreatedAt:    time.Now(),
+			CreatedAt:     time.Now(),
 		}
 
 		if err := roomManager.saveRoomInfo(roomInfo); err != nil {
@@ -569,6 +608,7 @@ func main() {
 		}
 
 		allowed := false
+		log.Println(roomInfo.AllowedEmails)
 		for _, allowedEmail := range roomInfo.AllowedEmails {
 			if allowedEmail == email {
 				allowed = true
@@ -579,7 +619,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"allowed": allowed, "isPrivate": true})
 	})
 
-	// Get room info (new endpoint)
+	// Get room info
 	r.GET("/api/room/:roomId/info", func(c *gin.Context) {
 		roomID := c.Param("roomId")
 
@@ -607,7 +647,7 @@ func main() {
 			room.mu.Lock()
 			clientCount := len(room.clients)
 			room.mu.Unlock()
-			
+
 			rooms = append(rooms, gin.H{
 				"roomId":      roomID,
 				"clientCount": clientCount,
