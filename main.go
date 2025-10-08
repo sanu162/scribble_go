@@ -2,13 +2,9 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
-	"fmt"
 	"log"
-	"math/big"
 	"net/http"
-	"net/smtp"
 	"sync"
 	"time"
 
@@ -36,19 +32,18 @@ type Message struct {
 
 // RoomInfo struct for MongoDB
 type RoomInfo struct {
-	RoomID        string    `bson:"room_id" json:"roomId"`
-	IsPrivate     bool      `bson:"is_private" json:"isPrivate"`
-	CreatorEmail  string    `bson:"creator_email" json:"creatorEmail"`
-	AllowedEmails []string  `bson:"allowed_emails" json:"allowedEmails"`
-	CreatedAt     time.Time `bson:"created_at" json:"createdAt"`
+	RoomID       string    `bson:"room_id" json:"roomId"`
+	IsPrivate    bool      `bson:"is_private" json:"isPrivate"`
+	CreatorName  string    `bson:"creator_name" json:"creatorName"`
+	CreatedAt    time.Time `bson:"created_at" json:"createdAt"`
 }
 
-// OTP struct
-type OTP struct {
-	Email     string    `json:"email"`
-	Code      string    `json:"code"`
-	RoomID    string    `json:"roomId"`
-	ExpiresAt time.Time `json:"expiresAt"`
+// JoinRequest represents a pending join request
+type JoinRequest struct {
+	UserName  string
+	UserID    string
+	Timestamp time.Time
+	Response  chan bool // Channel to receive approval/rejection
 }
 
 // Client represents a WebSocket connection
@@ -58,19 +53,22 @@ type Client struct {
 	room     *Room
 	userID   string
 	userName string
-	email    string
+	isCreator bool
 }
 
 // Room represents a chat room
 type Room struct {
-	id         string
-	clients    map[*Client]bool
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
-	mu         sync.Mutex
-	manager    *RoomManager
-	isPrivate  bool
+	id           string
+	clients      map[*Client]bool
+	broadcast    chan []byte
+	register     chan *Client
+	unregister   chan *Client
+	joinRequests map[string]*JoinRequest
+	requestMu    sync.Mutex
+	mu           sync.Mutex
+	manager      *RoomManager
+	isPrivate    bool
+	creatorName  string
 }
 
 // RoomManager manages all rooms
@@ -79,30 +77,19 @@ type RoomManager struct {
 	mu          sync.RWMutex
 	mongoClient *mongo.Client
 	db          *mongo.Database
-	otpStore    map[string]*OTP
-	otpMu       sync.RWMutex
 }
 
 var roomManager *RoomManager
-
-// Email configuration - UPDATE THESE WITH YOUR SMTP DETAILS
-const (
-	smtpHost       = "smtp.gmail.com"
-	smtpPort       = "587"
-	senderEmail    = "suryadiscord29@gmail.com"
-	senderPassword = "igjlfrmkavtugupw"
-)
 
 func newRoomManager(mongoClient *mongo.Client) *RoomManager {
 	return &RoomManager{
 		rooms:       make(map[string]*Room),
 		mongoClient: mongoClient,
 		db:          mongoClient.Database("chatapp"),
-		otpStore:    make(map[string]*OTP),
 	}
 }
 
-func (rm *RoomManager) getOrCreateRoom(roomID string, isPrivate bool) *Room {
+func (rm *RoomManager) getOrCreateRoom(roomID string, isPrivate bool, creatorName string) *Room {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
@@ -111,19 +98,21 @@ func (rm *RoomManager) getOrCreateRoom(roomID string, isPrivate bool) *Room {
 	}
 
 	room := &Room{
-		id:         roomID,
-		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte, 256),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		manager:    rm,
-		isPrivate:  isPrivate,
+		id:           roomID,
+		clients:      make(map[*Client]bool),
+		broadcast:    make(chan []byte, 256),
+		register:     make(chan *Client),
+		unregister:   make(chan *Client),
+		joinRequests: make(map[string]*JoinRequest),
+		manager:      rm,
+		isPrivate:    isPrivate,
+		creatorName:  creatorName,
 	}
 
 	rm.rooms[roomID] = room
 	go room.run()
 
-	log.Printf("Room created: %s (Private: %v)", roomID, isPrivate)
+	log.Printf("Room created: %s (Private: %v, Creator: %s)", roomID, isPrivate, creatorName)
 	return room
 }
 
@@ -131,7 +120,7 @@ func (rm *RoomManager) deleteRoom(roomID string) {
 	rm.mu.Lock()
 	delete(rm.rooms, roomID)
 	rm.mu.Unlock()
-	
+
 	log.Printf("Room deleted from memory: %s", roomID)
 
 	// Delete room and messages from database in background
@@ -194,11 +183,11 @@ func (rm *RoomManager) saveRoomInfo(roomInfo RoomInfo) error {
 	defer cancel()
 
 	collection := rm.db.Collection("rooms")
-	
+
 	// Check if room already exists
 	var existingRoom RoomInfo
 	err := collection.FindOne(ctx, bson.M{"room_id": roomInfo.RoomID}).Decode(&existingRoom)
-	
+
 	if err == mongo.ErrNoDocuments {
 		// Room doesn't exist, create it
 		_, err = collection.InsertOne(ctx, roomInfo)
@@ -207,7 +196,7 @@ func (rm *RoomManager) saveRoomInfo(roomInfo RoomInfo) error {
 		// Some other error occurred
 		return err
 	}
-	
+
 	// Room already exists
 	log.Printf("Room %s already exists in database", roomInfo.RoomID)
 	return nil
@@ -224,39 +213,6 @@ func (rm *RoomManager) getRoomInfo(roomID string) (*RoomInfo, error) {
 		return nil, err
 	}
 	return &roomInfo, nil
-}
-
-func (rm *RoomManager) addAllowedEmail(roomID, email string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	collection := rm.db.Collection("rooms")
-	_, err := collection.UpdateOne(
-		ctx,
-		bson.M{"room_id": roomID},
-		bson.M{"$addToSet": bson.M{"allowed_emails": email}},
-	)
-	return err
-}
-
-func generateOTP() string {
-	max := big.NewInt(1000000)
-	n, _ := rand.Int(rand.Reader, max)
-	return fmt.Sprintf("%06d", n.Int64())
-}
-
-func sendOTPEmail(to, otp, roomID string) error {
-	from := senderEmail
-	password := senderPassword
-
-	message := []byte(fmt.Sprintf("Subject: OTP for Private Room Access\r\n\r\n"+
-		"Your OTP to join room '%s' is: %s\r\n\r\n"+
-		"This OTP will expire in 5 minutes.\r\n\r\n"+
-		"If you didn't request this, please ignore this email.", roomID, otp))
-
-	auth := smtp.PlainAuth("", from, password, smtpHost)
-	err := smtp.SendMail(smtpHost+":"+smtpPort, auth, from, []string{to}, message)
-	return err
 }
 
 func (r *Room) run() {
@@ -302,6 +258,132 @@ func (r *Room) run() {
 	}
 }
 
+func (r *Room) sendJoinRequest(userName, userID string) bool {
+	// Create join request
+	request := &JoinRequest{
+		UserName:  userName,
+		UserID:    userID,
+		Timestamp: time.Now(),
+		Response:  make(chan bool),
+	}
+
+	r.requestMu.Lock()
+	r.joinRequests[userID] = request
+	r.requestMu.Unlock()
+
+	// Notify creator
+	notification := map[string]interface{}{
+		"type":     "join_request",
+		"userName": userName,
+		"userID":   userID,
+	}
+	notificationBytes, _ := json.Marshal(notification)
+
+	r.mu.Lock()
+	for client := range r.clients {
+		if client.isCreator {
+			client.send <- notificationBytes
+		}
+	}
+	r.mu.Unlock()
+
+	// Wait for response with timeout
+	select {
+	case approved := <-request.Response:
+		r.requestMu.Lock()
+		delete(r.joinRequests, userID)
+		r.requestMu.Unlock()
+		return approved
+	case <-time.After(60 * time.Second):
+		r.requestMu.Lock()
+		delete(r.joinRequests, userID)
+		r.requestMu.Unlock()
+		return false
+	}
+}
+
+func (r *Room) handleJoinResponse(userID string, approved bool) {
+	r.requestMu.Lock()
+	request, exists := r.joinRequests[userID]
+	r.requestMu.Unlock()
+
+	if exists {
+		request.Response <- approved
+	}
+}
+
+func (r *Room) getActiveUsers() []map[string]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	users := make([]map[string]string, 0)
+	for client := range r.clients {
+		if !client.isCreator {
+			users = append(users, map[string]string{
+				"userID":   client.userID,
+				"userName": client.userName,
+			})
+		}
+	}
+	return users
+}
+
+func (r *Room) transferCreator(newCreatorID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for client := range r.clients {
+		if client.userID == newCreatorID {
+			client.isCreator = true
+			r.creatorName = client.userName
+
+			// Notify all clients about new creator
+			notification := map[string]interface{}{
+				"type":           "creator_changed",
+				"newCreatorName": client.userName,
+			}
+			notificationBytes, _ := json.Marshal(notification)
+			
+			for c := range r.clients {
+				c.send <- notificationBytes
+			}
+
+			// Update database
+			go func(roomID, creatorName string) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				collection := r.manager.db.Collection("rooms")
+				_, err := collection.UpdateOne(
+					ctx,
+					bson.M{"room_id": roomID},
+					bson.M{"$set": bson.M{"creator_name": creatorName}},
+				)
+				if err != nil {
+					log.Printf("Error updating creator: %v", err)
+				}
+			}(r.id, client.userName)
+
+			break
+		}
+	}
+}
+
+func (r *Room) notifyRoomDeletion() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	notification := map[string]interface{}{
+		"type":    "room_deleted",
+		"message": "Room has been deleted by the creator",
+	}
+	notificationBytes, _ := json.Marshal(notification)
+
+	for client := range r.clients {
+		client.send <- notificationBytes
+	}
+}
+
 func (c *Client) readPump() {
 	defer func() {
 		c.room.unregister <- c
@@ -323,6 +405,59 @@ func (c *Client) readPump() {
 			continue
 		}
 
+		// Check if this is a join approval response
+		if msgType, ok := incomingMsg["type"].(string); ok && msgType == "join_response" {
+			if c.isCreator {
+				userID := incomingMsg["userID"].(string)
+				approved := incomingMsg["approved"].(bool)
+				c.room.handleJoinResponse(userID, approved)
+			}
+			continue
+		}
+
+		// Check if this is a leave request
+		if msgType, ok := incomingMsg["type"].(string); ok && msgType == "leave_request" {
+			if c.isCreator {
+				// Send active users list to creator
+				users := c.room.getActiveUsers()
+				response := map[string]interface{}{
+					"type":  "active_users",
+					"users": users,
+				}
+				responseBytes, _ := json.Marshal(response)
+				c.send <- responseBytes
+			} else {
+				// Regular user leaving, just disconnect
+				return
+			}
+			continue
+		}
+
+		// Check if this is a transfer creator request
+		if msgType, ok := incomingMsg["type"].(string); ok && msgType == "transfer_creator" {
+			if c.isCreator {
+				newCreatorID := incomingMsg["newCreatorID"].(string)
+				c.room.transferCreator(newCreatorID)
+				c.isCreator = false
+				// Now disconnect the old creator
+				return
+			}
+			continue
+		}
+
+		// Check if this is a delete room request
+		if msgType, ok := incomingMsg["type"].(string); ok && msgType == "delete_room" {
+			if c.isCreator {
+				c.room.notifyRoomDeletion()
+				// Small delay to ensure notification is sent
+				time.Sleep(500 * time.Millisecond)
+				// Disconnect all clients
+				return
+			}
+			continue
+		}
+
+		// Regular chat message
 		msg := Message{
 			RoomID:    c.room.id,
 			UserID:    incomingMsg["userId"].(string),
@@ -353,43 +488,13 @@ func (c *Client) writePump() {
 
 func handleWebSocket(c *gin.Context) {
 	roomID := c.Param("roomId")
-	email := c.Query("email")
+	userName := c.Query("userName")
+	userID := c.Query("userID")
+	isCreator := c.Query("isCreator") == "true"
 
-	if roomID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Room ID required"})
+	if roomID == "" || userName == "" || userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing parameters"})
 		return
-	}
-
-	// Check if room exists and if it's private
-	roomInfo, err := roomManager.getRoomInfo(roomID)
-	if err == nil && roomInfo.IsPrivate {
-		// Room is private - verify email access
-		if email == "" {
-			log.Printf("Access denied: No email provided for private room %s", roomID)
-			conn, _ := upgrader.Upgrade(c.Writer, c.Request, nil)
-			conn.WriteJSON(map[string]string{"error": "access_denied", "message": "Email required for private room"})
-			conn.Close()
-			return
-		}
-
-		// Check if email is in allowed list
-		allowed := false
-		for _, allowedEmail := range roomInfo.AllowedEmails {
-			if allowedEmail == email {
-				allowed = true
-				break
-			}
-		}
-
-		if !allowed {
-			log.Printf("Access denied: Email %s not authorized for private room %s", email, roomID)
-			conn, _ := upgrader.Upgrade(c.Writer, c.Request, nil)
-			conn.WriteJSON(map[string]string{"error": "access_denied", "message": "You are not authorized to join this private room"})
-			conn.Close()
-			return
-		}
-
-		log.Printf("Access granted: Email %s authorized for private room %s", email, roomID)
 	}
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -398,17 +503,48 @@ func handleWebSocket(c *gin.Context) {
 		return
 	}
 
-	room := roomManager.getOrCreateRoom(roomID, roomInfo != nil && roomInfo.IsPrivate)
+	// Get room info
+	roomInfo, err := roomManager.getRoomInfo(roomID)
+	var room *Room
+
+	if err == nil {
+		// Room exists
+		room = roomManager.getOrCreateRoom(roomID, roomInfo.IsPrivate, roomInfo.CreatorName)
+
+		// If it's a private room and user is not the creator, request approval
+		if roomInfo.IsPrivate && !isCreator {
+			// Send waiting message
+			conn.WriteJSON(map[string]string{"type": "waiting_approval", "message": "Waiting for room creator approval..."})
+
+			// Request approval
+			approved := room.sendJoinRequest(userName, userID)
+
+			if !approved {
+				conn.WriteJSON(map[string]string{"type": "access_denied", "message": "Join request denied by room creator"})
+				conn.Close()
+				return
+			}
+
+			// Approved, send success
+			conn.WriteJSON(map[string]string{"type": "approved", "message": "Join request approved!"})
+		}
+	} else {
+		// Room doesn't exist, this user is creating it
+		room = roomManager.getOrCreateRoom(roomID, false, userName)
+	}
 
 	client := &Client{
-		conn:  conn,
-		send:  make(chan []byte, 256),
-		room:  room,
-		email: email,
+		conn:      conn,
+		send:      make(chan []byte, 256),
+		room:      room,
+		userID:    userID,
+		userName:  userName,
+		isCreator: isCreator || room.creatorName == userName,
 	}
 
 	room.register <- client
 
+	// Send message history
 	go func() {
 		messages, err := roomManager.getMessageHistory(roomID)
 		if err != nil {
@@ -470,9 +606,9 @@ func main() {
 	// Create room
 	r.POST("/api/room/create", func(c *gin.Context) {
 		var req struct {
-			RoomID       string `json:"roomId"`
-			IsPrivate    bool   `json:"isPrivate"`
-			CreatorEmail string `json:"creatorEmail"`
+			RoomID      string `json:"roomId"`
+			IsPrivate   bool   `json:"isPrivate"`
+			CreatorName string `json:"creatorName"`
 		}
 
 		if err := c.BindJSON(&req); err != nil {
@@ -481,11 +617,10 @@ func main() {
 		}
 
 		roomInfo := RoomInfo{
-			RoomID:        req.RoomID,
-			IsPrivate:     req.IsPrivate,
-			CreatorEmail:  req.CreatorEmail,
-			AllowedEmails: []string{req.CreatorEmail},
-			CreatedAt:     time.Now(),
+			RoomID:      req.RoomID,
+			IsPrivate:   req.IsPrivate,
+			CreatorName: req.CreatorName,
+			CreatedAt:   time.Now(),
 		}
 
 		if err := roomManager.saveRoomInfo(roomInfo); err != nil {
@@ -494,129 +629,6 @@ func main() {
 		}
 
 		c.JSON(http.StatusOK, gin.H{"success": true, "roomId": req.RoomID})
-	})
-
-	// Request OTP for private room
-	r.POST("/api/room/request-otp", func(c *gin.Context) {
-		var req struct {
-			RoomID string `json:"roomId"`
-			Email  string `json:"email"`
-		}
-
-		if err := c.BindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-			return
-		}
-
-		roomInfo, err := roomManager.getRoomInfo(req.RoomID)
-		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
-			return
-		}
-
-		if !roomInfo.IsPrivate {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Room is not private"})
-			return
-		}
-
-		otp := generateOTP()
-		otpKey := req.RoomID + ":" + req.Email
-
-		roomManager.otpMu.Lock()
-		roomManager.otpStore[otpKey] = &OTP{
-			Email:     req.Email,
-			Code:      otp,
-			RoomID:    req.RoomID,
-			ExpiresAt: time.Now().Add(5 * time.Minute),
-		}
-		roomManager.otpMu.Unlock()
-
-		// Send OTP via email
-		if err := sendOTPEmail(req.Email, otp, req.RoomID); err != nil {
-			log.Printf("Error sending email: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send OTP"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"success": true, "message": "OTP sent to email"})
-	})
-
-	// Verify OTP
-	r.POST("/api/room/verify-otp", func(c *gin.Context) {
-		var req struct {
-			RoomID string `json:"roomId"`
-			Email  string `json:"email"`
-			OTP    string `json:"otp"`
-		}
-
-		if err := c.BindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-			return
-		}
-
-		otpKey := req.RoomID + ":" + req.Email
-
-		roomManager.otpMu.RLock()
-		storedOTP, exists := roomManager.otpStore[otpKey]
-		roomManager.otpMu.RUnlock()
-
-		if !exists {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "OTP not found or expired"})
-			return
-		}
-
-		if time.Now().After(storedOTP.ExpiresAt) {
-			roomManager.otpMu.Lock()
-			delete(roomManager.otpStore, otpKey)
-			roomManager.otpMu.Unlock()
-			c.JSON(http.StatusBadRequest, gin.H{"error": "OTP expired"})
-			return
-		}
-
-		if storedOTP.Code != req.OTP {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid OTP"})
-			return
-		}
-
-		// Add email to allowed list
-		if err := roomManager.addAllowedEmail(req.RoomID, req.Email); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify"})
-			return
-		}
-
-		roomManager.otpMu.Lock()
-		delete(roomManager.otpStore, otpKey)
-		roomManager.otpMu.Unlock()
-
-		c.JSON(http.StatusOK, gin.H{"success": true, "message": "OTP verified"})
-	})
-
-	// Check if email is allowed in private room
-	r.GET("/api/room/:roomId/check-access/:email", func(c *gin.Context) {
-		roomID := c.Param("roomId")
-		email := c.Param("email")
-
-		roomInfo, err := roomManager.getRoomInfo(roomID)
-		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
-			return
-		}
-
-		if !roomInfo.IsPrivate {
-			c.JSON(http.StatusOK, gin.H{"allowed": true, "isPrivate": false})
-			return
-		}
-
-		allowed := false
-		log.Println(roomInfo.AllowedEmails)
-		for _, allowedEmail := range roomInfo.AllowedEmails {
-			if allowedEmail == email {
-				allowed = true
-				break
-			}
-		}
-
-		c.JSON(http.StatusOK, gin.H{"allowed": allowed, "isPrivate": true})
 	})
 
 	// Get room info
@@ -630,9 +642,10 @@ func main() {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"roomId":    roomInfo.RoomID,
-			"isPrivate": roomInfo.IsPrivate,
-			"createdAt": roomInfo.CreatedAt,
+			"roomId":      roomInfo.RoomID,
+			"isPrivate":   roomInfo.IsPrivate,
+			"creatorName": roomInfo.CreatorName,
+			"createdAt":   roomInfo.CreatedAt,
 		})
 	})
 
